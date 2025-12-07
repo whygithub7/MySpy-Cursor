@@ -1,4 +1,6 @@
 /results
+/.vscode
+/vscode
 
 .env
 .env.*
