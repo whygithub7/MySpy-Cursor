@@ -42,15 +42,13 @@
    ```bash
    pip install -r facebook-ads-library-mcp/requirements.txt
    ```
-4. Создайте файл настроек (и скопируйте его в подпапку для надежности):
+4. Создайте файл настроек:
    ```bash
    # Windows
-   copy facebook-ads-library-mcp\.env.template .env
-   copy facebook-ads-library-mcp\.env.template facebook-ads-library-mcp\.env
+   copy .env.template .env
    
    # Mac / Linux
-   cp facebook-ads-library-mcp/.env.template .env
-   cp facebook-ads-library-mcp/.env.template facebook-ads-library-mcp/.env
+   cp .env.template .env
    ```
 
 ### Настройка ключей

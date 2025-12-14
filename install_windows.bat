@@ -49,7 +49,7 @@ echo.
 :: 4. Setup .env file
 if not exist ".env" (
     echo [INFO] Creating .env config file from template...
-    copy "facebook-ads-library-mcp\.env.template" ".env" >nul
+    copy ".env.template" ".env" >nul
     echo [OK] .env file created. 
     echo [IMPORTANT] OPEN THE .env FILE AND PASTE YOUR API KEYS!
 ) else (
