@@ -366,7 +366,9 @@ def save_results(ads: list, filename: str):
     """Сохраняет результаты в JSON файл."""
     # ВСЕГДА используем абсолютный путь к корню проекта
     # Не используем os.getcwd(), так как MCP сервер может работать из другой директории
-    project_root = r"C:\Users\ahmed\Desktop\MySpy Cursor"
+    # Получаем путь к корню проекта из пути к текущему файлу
+    current_file_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_file_dir)  # Поднимаемся на уровень выше из facebook-ads-library-mcp
     
     results_dir = os.path.join(project_root, "results")
     if not os.path.exists(results_dir):
@@ -760,18 +762,76 @@ def search_medical_ads_by_keyword(
             limit = 50
     
     try:
-        # Get API key first
-        get_scrapecreators_api_key()
+        # Получаем функцию analyze_media из модуля ДО того, как параметр перекроет её имя
+        # Используем __dict__ модуля напрямую, чтобы гарантированно получить функцию, а не параметр
+        import sys
+        import types
+        current_module = sys.modules[__name__]
+        # Получаем функцию напрямую из словаря модуля
+        analyze_media_func = current_module.__dict__.get('analyze_media')
+        # Проверяем, что это действительно функция
+        if not isinstance(analyze_media_func, types.FunctionType):
+            # Если это не функция, значит что-то пошло не так - используем альтернативный способ
+            # Импортируем модуль заново, чтобы получить функцию
+            import importlib
+            module = importlib.import_module(__name__)
+            analyze_media_func = getattr(module, 'analyze_media')
         
-        # Search for ads
-        ads = search_ads_by_keyword(
-            query=query,
-            limit=limit or 50,
-            country=country,
-            active_status=active_status,
-            media_type=media_type,
-            trim=False
-        )
+        # Сохраняем значение параметра в отдельную переменную
+        should_analyze_media = analyze_media
+        
+        # Get API key first
+        try:
+            get_scrapecreators_api_key()
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"Failed to get API key: {str(e)}",
+                "results": [],
+                "count": 0,
+                "total_found": 0,
+                "filtered_count": 0,
+                "error": str(e)
+            }
+        
+        # Search for ads с таймаутом
+        try:
+            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+            
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    search_ads_by_keyword,
+                    query=query,
+                    limit=limit or 50,
+                    country=country,
+                    active_status=active_status,
+                    media_type=media_type,
+                    trim=False
+                )
+                try:
+                    # Таймаут 90 секунд для поиска объявлений (может быть много запросов)
+                    ads = future.result(timeout=90)
+                except FutureTimeoutError:
+                    future.cancel()
+                    return {
+                        "success": False,
+                        "message": f"Search timeout after 90 seconds for query '{query}'. API may be slow or unresponsive.",
+                        "results": [],
+                        "count": 0,
+                        "total_found": 0,
+                        "filtered_count": 0,
+                        "error": "Search timeout (90s)"
+                    }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"Error during search for query '{query}': {str(e)}",
+                "results": [],
+                "count": 0,
+                "total_found": 0,
+                "filtered_count": 0,
+                "error": str(e)
+            }
         
         total_found = len(ads)
         
@@ -795,12 +855,12 @@ def search_medical_ads_by_keyword(
                 # Затем анализ медиа (выполняется до финальной фильтрации)
                 ad['search_query'] = query
                 
-                if analyze_media and not GEMINI_QUOTA_EXHAUSTED:
-                    media_analysis = analyze_media(ad)
+                if should_analyze_media and not GEMINI_QUOTA_EXHAUSTED:
+                    media_analysis = analyze_media_func(ad)
                     ad['media_analysis'] = media_analysis
                 
                 # Дополнительная фильтрация на основе анализа медиа
-                if filter_ad(ad, use_media_analysis=analyze_media):
+                if filter_ad(ad, use_media_analysis=should_analyze_media):
                     filtered_ads.append(ad)
         
         # Группировка по внешним URL (после фильтрации всех объявлений)
@@ -825,24 +885,27 @@ def search_medical_ads_by_keyword(
         saved_filepath = None
         saved_count = filtered_count
         
+        # Автоматическое сохранение: если target_file не указан, генерируем имя файла только на основе страны
+        if not target_file:
+            # Генерируем имя файла только на основе страны (1 страна = 1 файл)
+            country_code = country.upper() if country else "ALL"
+            target_file = f"ads_{country_code}.json"
+        
         if target_file:
             # ВСЕГДА используем абсолютный путь к корню проекта
             # Не используем os.getcwd(), так как MCP сервер может работать из другой директории
-            project_root = r"C:\Users\ahmed\Desktop\MySpy Cursor"
+            # Получаем путь к корню проекта из пути к текущему файлу
+            current_file_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(current_file_dir)  # Поднимаемся на уровень выше из facebook-ads-library-mcp
             
             results_dir = os.path.join(project_root, "results")
             if not os.path.exists(results_dir):
                 os.makedirs(results_dir)
             filepath = os.path.join(results_dir, target_file)
             
-            # Если файл существует и append_mode=True, дополняем файл
-            if append_mode and os.path.exists(filepath):
-                existing_urls, existing_ads = load_existing_ads(filepath)
-                new_ads = filter_new_ads(formatted_ads, existing_urls, max_ads)
-                saved_count = len(new_ads)
-                final_ads = existing_ads + new_ads
-            # Если файл существует и append_mode=False, все равно дополняем (как в search_ads.py)
-            elif os.path.exists(filepath):
+            # ВСЕГДА проверяем существование файла перед записью
+            # Если файл существует, автоматически дополняем его (append_mode)
+            if os.path.exists(filepath):
                 existing_urls, existing_ads = load_existing_ads(filepath)
                 new_ads = filter_new_ads(formatted_ads, existing_urls, max_ads)
                 saved_count = len(new_ads)
